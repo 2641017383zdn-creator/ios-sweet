@@ -1,0 +1,22 @@
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -250,6 +250,9 @@
+ void
+ AppleCLCD::present(const uint8_t *rec)
+ {
+ 	uint32_t mask = get32(rec, 0x104);
++	static uint32_t diag_present;
++	if (diag_present++ < 12)
++		IOLog("SWEET DIAG: present mask=0x%x\n", mask);
+
+ 	if (!fConsolePaused) {
+@@ -316,6 +319,9 @@
+ 		if (w <= 0 || h <= 0 || s->elementWidth != 1 || s->elementHeight != 1 ||
+ 		    s->memory == NULL || last > s->memory->getLength()) {
+ 			src = 0;
+ 		}
++		static uint32_t diag_copy;
++		if (diag_copy++ < 12)
++			IOLog("SWEET DIAG: surface=%u src=%llx bpe=%u w=%d h=%d\n", id, (unsigned long long)src, bpe, w, h);
+ 		if (src != 0 && bpe == 4) {
+ 			for (int32_t y = 0; y < h; y++) {
