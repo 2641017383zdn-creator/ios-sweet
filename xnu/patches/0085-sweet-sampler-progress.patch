@@ -17,6 +17,6 @@
 +		printf("SMP ITER BEGIN %d\n", i);
  		proc_iterate(PROC_ALLPROCLIST, sweet_sample_proc, NULL, NULL, NULL);
 +		printf("SMP ITER END %d\n", i);
- 		(void)tsleep(&chan, PZERO, "sweetsmp", 120 * hz);
+ 		(void)tsleep(&chan, PZERO, "sweetsmp", 60 * hz);
  	}
  }

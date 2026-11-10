@@ -37,13 +37,13 @@
  	queue_iterate(&task->threads, thread, thread_t, task_threads) {
  		arm_saved_state_t *ss = find_user_regs(thread);
 -		char line[220];
-+		char line[400];
++		char line[600];
  		int n;
  		uint64_t fp;
  
 @@ -1005,7 +1005,7 @@
  		fp = get_saved_state_fp(ss);
- 		n = snprintf(line, sizeof(line), "SMP %s t%d pc 0x%llx lr 0x%llx sp 0x%llx bt", name, tn++,
+ 		n = snprintf(line, sizeof(line), "SMP %s t%d tid 0x%llx pc 0x%llx lr 0x%llx sp 0x%llx bt", name, tn++, thread_tid(thread),
  		    get_saved_state_pc(ss), get_saved_state_lr(ss), get_saved_state_sp(ss));
 -		for (int i = 0; i < 8 && fp != 0 && (fp & 7) == 0 && n < (int)sizeof(line) - 20; i++) {
 +		for (int i = 0; i < 16 && fp != 0 && (fp & 7) == 0 && n < (int)sizeof(line) - 20; i++) {
@@ -69,4 +69,4 @@
 +	for (int i = 0; i < 40; i++) {
  		printf("SMP --- sample %d\n", i);
  		proc_iterate(PROC_ALLPROCLIST, sweet_sample_proc, NULL, NULL, NULL);
- 		(void)tsleep(&chan, PZERO, "sweetsmp", 120 * hz);
+ 		(void)tsleep(&chan, PZERO, "sweetsmp", 60 * hz);
