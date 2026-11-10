@@ -1,0 +1,114 @@
+--- a/bsd/vfs/vfs_syscalls.c
++++ b/bsd/vfs/vfs_syscalls.c
+@@ -118,8 +118,10 @@
+ #include <mach/mach_types.h>
+ #include <kern/kern_types.h>
+ #include <kern/kalloc.h>
+ #include <kern/task.h>
++#include <kern/thread.h>
++#include <kern/clock.h>
+ 
+ #include <vm/vm_pageout.h>
+ #include <vm/vm_protos.h>
+ 
+@@ -7149,22 +7151,92 @@
+ 	           AT_SYMLINK_NOFOLLOW);
+ }
+ 
+ /*
++ * SWEET v9 lstat instrumentation (diagnostic only).
++ *
++ * Keep normal kernel behaviour, and only trace containermanager.  Print
++ * the first 64 paired events, then 1/256 pairs, plus every slow completion
++ * (> 1000 ms).  To obtain *every* pair, boot with sweetlstatfull=1;
++ * beware that full tracing can produce very large serial logs and affect
++ * guest scheduling.  A missing EXIT is meaningful only for a logged ENTER.
++ *
++ * p_comm may be truncated to MAXCOMLEN, so compare the first 15 bytes.
++ */
++static uint64_t sweet_lstat_serial;
++static int sweet_lstat_full = -1;
++
++static int
++sweet_lstat_traced(proc_t p)
++{
++	return p != NULL && strncmp(p->p_comm, "containermanage", 15) == 0;
++}
++
++static int
++sweet_lstat_traced_call(proc_t p, user_addr_t path, user_addr_t ub, int is64)
++{
++	uint64_t start, stop, elapsed_ns = 0;
++	uint64_t serial;
++	int error, full, log_pair;
++
++	if (!sweet_lstat_traced(p)) {
++		return fstatat_internal(vfs_context_current(), path, ub,
++		           0, 0, is64, UIO_USERSPACE, AT_FDCWD, AT_SYMLINK_NOFOLLOW);
++	}
++
++	full = __atomic_load_n(&sweet_lstat_full, __ATOMIC_RELAXED);
++	if (full == -1) {
++		int requested = 0;
++		(void)PE_parse_boot_argn("sweetlstatfull", &requested, sizeof(requested));
++		full = requested != 0;
++		__atomic_store_n(&sweet_lstat_full, full, __ATOMIC_RELAXED);
++	}
++
++	serial = __atomic_add_fetch(&sweet_lstat_serial, 1, __ATOMIC_RELAXED);
++	log_pair = full || serial <= 64 || (serial % 256) == 0;
++
++	if (log_pair) {
++		char pathbuf[256] = { 0 };
++		size_t copied = 0;
++		int copy_error = copyinstr(path, pathbuf, sizeof(pathbuf), &copied);
++
++		pathbuf[sizeof(pathbuf) - 1] = '\0';
++		printf("SWEET LSTAT ENTER id=%llu pid=%d tid=0x%llx syscall=lstat%s path=%s path_error=%d\n",
++		    (unsigned long long)serial, p->p_pid,
++		    (unsigned long long)thread_tid(current_thread()),
++		    is64 ? "64" : "", copy_error == 0 ? pathbuf : "<unavailable-or-too-long>",
++		    copy_error);
++	}
++
++	clock_get_uptime(&start);
++	error = fstatat_internal(vfs_context_current(), path, ub,
++	           0, 0, is64, UIO_USERSPACE, AT_FDCWD, AT_SYMLINK_NOFOLLOW);
++	clock_get_uptime(&stop);
++	absolutetime_to_nanoseconds(stop - start, &elapsed_ns);
++
++	if (log_pair || elapsed_ns >= 1000000000ULL) {
++		printf("SWEET LSTAT EXIT id=%llu pid=%d tid=0x%llx syscall=lstat%s error=%d elapsed_ms=%llu sampled=%d\n",
++		    (unsigned long long)serial, p->p_pid,
++		    (unsigned long long)thread_tid(current_thread()),
++		    is64 ? "64" : "", error,
++		    (unsigned long long)(elapsed_ns / 1000000ULL), log_pair);
++	}
++	return error;
++}
++
++/*
+  * Get file status; this version does not follow links.
+  */
+ int
+-lstat(__unused proc_t p, struct lstat_args *uap, __unused int32_t *retval)
+-{
+-	return fstatat_internal(vfs_context_current(), uap->path, uap->ub,
+-	           0, 0, 0, UIO_USERSPACE, AT_FDCWD, AT_SYMLINK_NOFOLLOW);
++lstat(proc_t p, struct lstat_args *uap, __unused int32_t *retval)
++{
++	return sweet_lstat_traced_call(p, uap->path, uap->ub, 0);
+ }
+ 
+ int
+-lstat64(__unused proc_t p, struct lstat64_args *uap, __unused int32_t *retval)
+-{
+-	return fstatat_internal(vfs_context_current(), uap->path, uap->ub,
+-	           0, 0, 1, UIO_USERSPACE, AT_FDCWD, AT_SYMLINK_NOFOLLOW);
++lstat64(proc_t p, struct lstat64_args *uap, __unused int32_t *retval)
++{
++	return sweet_lstat_traced_call(p, uap->path, uap->ub, 1);
+ }
+ 
+ /*
+  * lstat64_extended: Get file status; can handle large inode numbers; does not
