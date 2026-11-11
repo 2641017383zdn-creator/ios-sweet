@@ -1,0 +1,70 @@
+--- a/bsd/vfs/vfs_syscalls.c
++++ b/bsd/vfs/vfs_syscalls.c
+@@ -5072,12 +5072,65 @@
+ 	return open_nocancel(p, (struct open_nocancel_args *)uap, retval);
+ }
+ 
++/*
++ * SWEET v11: diagnostic-only lsd open_nocancel tracing.
++ */
++static uint64_t sweet_open_nocancel_serial;
++
+ int
+ open_nocancel(__unused proc_t p, struct open_nocancel_args *uap,
+     int32_t *retval)
+ {
+-	return openat_internal(vfs_context_current(), uap->path, uap->flags,
+-	           uap->mode, AT_FDCWD, UIO_USERSPACE, retval);
++        int error;
++        int trace = p != NULL && strncmp(p->p_comm, "lsd", 4) == 0;
++
++        if (!trace) {
++                return openat_internal(vfs_context_current(), uap->path,
++                           uap->flags, uap->mode, AT_FDCWD,
++                           UIO_USERSPACE, retval);
++        }
++
++        uint64_t id, start, stop, elapsed_ns = 0;
++        int log_pair;
++        int path_error;
++        size_t copied = 0;
++        char pathbuf[256] = { 0 };
++
++        id = __atomic_add_fetch(&sweet_open_nocancel_serial, 1,
++                   __ATOMIC_RELAXED);
++        log_pair = id <= 128 || (id % 64) == 0;
++
++        path_error = copyinstr(uap->path, pathbuf,
++                   sizeof(pathbuf), &copied);
++        pathbuf[sizeof(pathbuf) - 1] = '\0';
++
++        if (log_pair) {
++                printf("SWEET OPEN ENTER id=%llu pid=%d tid=0x%llx path=%s path_error=%d\n",
++                    (unsigned long long)id, p->p_pid,
++                    (unsigned long long)thread_tid(current_thread()),
++                    path_error == 0 ? pathbuf : "<unavailable>",
++                    path_error);
++        }
++
++        clock_get_uptime(&start);
++        error = openat_internal(vfs_context_current(), uap->path,
++                   uap->flags, uap->mode, AT_FDCWD,
++                   UIO_USERSPACE, retval);
++        clock_get_uptime(&stop);
++
++        absolutetime_to_nanoseconds(stop - start, &elapsed_ns);
++
++        if (log_pair || elapsed_ns >= 1000000000ULL) {
++                printf("SWEET OPEN EXIT id=%llu pid=%d tid=0x%llx error=%d fd=%d elapsed_ms=%llu sampled=%d path=%s\n",
++                    (unsigned long long)id, p->p_pid,
++                    (unsigned long long)thread_tid(current_thread()),
++                    error, error == 0 ? *retval : -1,
++                    (unsigned long long)(elapsed_ns / 1000000ULL),
++                    log_pair,
++                    path_error == 0 ? pathbuf : "<unavailable>");
++        }
++
++        return error;
+ }
+ 
+ int
