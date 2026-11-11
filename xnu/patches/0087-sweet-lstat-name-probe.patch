@@ -1,0 +1,43 @@
+--- a/bsd/vfs/vfs_syscalls.c
++++ b/bsd/vfs/vfs_syscalls.c
+@@ -7164,11 +7164,21 @@
+  */
+ static uint64_t sweet_lstat_serial;
+ static int sweet_lstat_full = -1;
++static uint32_t sweet_lstat_probe_count;
+ 
+ static int
+ sweet_lstat_traced(proc_t p)
+ {
+-	return p != NULL && strncmp(p->p_comm, "containermanage", 15) == 0;
++	char name[32] = { 0 };
++
++	if (p == NULL) {
++		return 0;
++	}
++	if (strncmp(p->p_comm, "containermanage", 15) == 0) {
++		return 1;
++	}
++	proc_name(proc_pid(p), name, sizeof(name));
++	return strcmp(name, "containermanager") == 0;
+ }
+ 
+ static int
+@@ -7177,6 +7187,17 @@
+ 	uint64_t start, stop, elapsed_ns = 0;
+ 	uint64_t serial;
+ 	int error, full, log_pair;
++
++	/* Prove these syscall entry points are reached, independent of filtering. */
++	if (__atomic_load_n(&sweet_lstat_probe_count, __ATOMIC_RELAXED) < 24) {
++		uint32_t n = __atomic_add_fetch(&sweet_lstat_probe_count, 1, __ATOMIC_RELAXED);
++		if (n <= 24 && p != NULL) {
++			char name[32] = { 0 };
++			proc_name(proc_pid(p), name, sizeof(name));
++			printf("SWEET LSTAT PROBE n=%u pid=%d comm=%s name=%s syscall=lstat%s\n",
++			    n, proc_pid(p), p->p_comm, name, is64 ? "64" : "");
++		}
++	}
+ 
+ 	if (!sweet_lstat_traced(p)) {
+ 		return fstatat_internal(vfs_context_current(), path, ub,
