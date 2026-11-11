@@ -1,0 +1,43 @@
+--- a/bsd/dev/sweet_sample.c
++++ b/bsd/dev/sweet_sample.c
+@@ -10,7 +10,7 @@
+  * with tools/sweet-crash.py). A thread blocked in a syscall shows the
+  * syscall stub in pc and its caller in lr/bt.
+  *
+- * First sample 90 s after start, then every 120 s, 40 samples at most.
++ * First sample 90 s after start, then 60 s between rounds, 240 rounds at most.
+  */
+ #include <sys/param.h>
+ #include <sys/systm.h>
+@@ -46,11 +46,21 @@
+ 
+ extern void sweet_sample_task(const char *name, int pid, task_t task);  /* osfmk/kern/exception.c */
+ 
++/* Called under proc_list_lock; use the same short name that proc_name returns. */
++static int
++sweet_sample_filter(proc_t p, __unused void *arg)
++{
++	char name[sizeof(p->p_comm) + 1];
++	memcpy(name, p->p_comm, sizeof(p->p_comm));
++	name[sizeof(p->p_comm)] = 0;
++	return sweet_sample_wanted(name);
++}
++
+ static int
+ sweet_sample_proc(proc_t p, __unused void *arg)
+ {
+ 	char name[32];
+-	proc_name(proc_pid(p), name, sizeof(name));
++	strlcpy(name, p->p_comm, sizeof(name));
+ 	if (sweet_sample_wanted(name)) {
+ 		task_t task = proc_task(p);
+ 		if (task != TASK_NULL) {
+@@ -76,7 +86,7 @@
+ 	for (int i = 0; i < 240; i++) {
+ 		printf("SMP --- sample %d\n", i);
+ 		printf("SMP ITER BEGIN %d\n", i);
+-		proc_iterate(PROC_ALLPROCLIST, sweet_sample_proc, NULL, NULL, NULL);
++		proc_iterate(PROC_ALLPROCLIST, sweet_sample_proc, NULL, sweet_sample_filter, NULL);
+ 		printf("SMP ITER END %d\n", i);
+ 		(void)tsleep(&chan, PZERO, "sweetsmp", 60 * hz);
+ 	}
